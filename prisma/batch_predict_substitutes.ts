@@ -14,6 +14,9 @@ const pool = new Pool({ connectionString })
 const adapter = new PrismaPg(pool)
 const prisma = new PrismaClient({ adapter })
 
+// One row of substitution_pairs.json
+type SubstitutionPair = { ingredient: string; substitution: string | null }
+
 // Define the schema for the AI model output
 const substituteSchema = z.object({
   substitutes: z.array(
@@ -32,13 +35,12 @@ async function main() {
   // Load substitution pairs JSON dataset
   const jsonPath = path.join(__dirname, '../substitution_pairs.json')
   const rawData = fs.readFileSync(jsonPath, 'utf-8')
-  const allPairs = JSON.parse(rawData) as any[]
+  const allPairs = JSON.parse(rawData) as SubstitutionPair[]
 
   console.log(`Loaded ${allPairs.length} raw pairs from substitution_pairs.json`)
 
   // Get all ingredients from our existing DB
   const ingredientsInDb = await prisma.ingredient.findMany()
-  const dbIngredientsList = ingredientsInDb.map(i => i.ingredient_name)
   const dbIngredientsLower = ingredientsInDb.map(i => i.ingredient_name.toLowerCase())
   const nameToId = new Map(ingredientsInDb.map(i => [i.ingredient_name.toLowerCase(), i.ingredient_id]))
 
@@ -54,8 +56,9 @@ async function main() {
     // Find candidates for this ingredient in the JSON dataset
     // And ensure the substitution exists in our DB too
     const candidates = allPairs
-      .filter(p => p.ingredient.toLowerCase() === targetName && dbIngredientsLower.includes(p.substitution.toLowerCase()))
-      .map(p => p.substitution.toLowerCase())
+      .filter(p => p.ingredient.toLowerCase() === targetName && p.substitution)
+      .map(p => p.substitution!.toLowerCase())
+      .filter(sub => dbIngredientsLower.includes(sub))
 
     const uniqueCandidates = [...new Set(candidates)]
 
@@ -108,8 +111,8 @@ async function main() {
             })
             console.log(`  ✅ Added: ${sub.target_ingredient} (Confidence: ${sub.confidence_score})`)
             matchedCount++
-          } catch (e: any) {
-            console.error(`  ❌ Error inserting: ${sub.target_ingredient}`, e.message)
+          } catch (e) {
+            console.error(`  ❌ Error inserting: ${sub.target_ingredient}`, e instanceof Error ? e.message : e)
           }
         }
       }
@@ -119,8 +122,8 @@ async function main() {
       // Artificial delay to avoid rate limits (2 requests per minute free tier? We'll pause for 3s to be safe, assuming paid/higher tier)
       await new Promise(r => setTimeout(r, 2000))
 
-    } catch (e: any) {
-      console.error(`Error generating prediction for ${dbIngredient.ingredient_name}:`, e.message)
+    } catch (e) {
+      console.error(`Error generating prediction for ${dbIngredient.ingredient_name}:`, e instanceof Error ? e.message : e)
     }
   }
 
