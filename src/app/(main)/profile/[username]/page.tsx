@@ -20,7 +20,7 @@ export default async function ProfilePage({ params }: { params: Promise<{ userna
         include: { recipe: { include: { images: { where: { is_primary: true }, take: 1 } } } },
         orderBy: { cooked_at: 'desc' }, take: 10
       },
-      taste_signals: true,
+      taste_signals: { orderBy: { weight: 'desc' } },
     }
   })
   if (!user) return notFound()
@@ -94,7 +94,7 @@ export default async function ProfilePage({ params }: { params: Promise<{ userna
               {user.taste_signals.map(signal => (
                 <div key={signal.signal_id}>
                   <div className="flex justify-between font-mono text-xs uppercase mb-1.5">
-                    <span className="font-bold text-[var(--fg)]">{signal.signal_type.replace('_', ' ')}</span>
+                    <span className="font-bold text-[var(--fg)]">{signal.signal_type.replaceAll('_', ' ')}</span>
                     <span className="bg-[var(--yellow)] border border-[var(--border)] px-2 font-black text-black">{(signal.weight * 100).toFixed(0)}%</span>
                   </div>
                   <div className="h-4 border-[2px] border-[var(--border)] bg-[var(--bg-muted)]">

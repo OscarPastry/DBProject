@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useEffect } from 'react'
-import { Database, Code, LayoutDashboard, Table as TableIcon, Play, AlertCircle, Search } from 'lucide-react'
+import { Database, Code, LayoutDashboard, Table as TableIcon, Play, AlertCircle, Search, Gauge } from 'lucide-react'
 import ReactFlow, { MiniMap, Controls, Background, useNodesState, useEdgesState, MarkerType } from 'reactflow'
 import 'reactflow/dist/style.css'
 
@@ -140,8 +140,13 @@ function LiveQueryTab() {
   const [results, setResults] = useState<Record<string, unknown>[]>([])
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(false)
+  const [plan, setPlan] = useState<string[] | null>(null)
 
   const PRESETS = [
+    { label: 'Index: recipes using garlic', sql: `SELECT r.title FROM "USES" u JOIN "Recipe" r ON r.recipe_id = u.recipe_id WHERE u.ingredient_id = (SELECT ingredient_id FROM "Ingredient" WHERE ingredient_name ILIKE 'garlic' LIMIT 1);` },
+    { label: 'GIN: full-text search', sql: `SELECT title, ts_rank(search_vector, websearch_to_tsquery('english', 'chicken curry')) AS rank FROM "Recipe" WHERE search_vector @@ websearch_to_tsquery('english', 'chicken curry') ORDER BY rank DESC;` },
+    { label: 'View: top-rated recipes', sql: `SELECT r.title, s.review_count, ROUND(s.avg_rating::numeric, 2) AS avg FROM "Recipe_Rating_Stats" s JOIN "Recipe" r USING (recipe_id) WHERE s.review_count >= 3 ORDER BY s.avg_rating DESC LIMIT 10;` },
+    { label: 'Window: top 3 per cuisine', sql: `SELECT * FROM (SELECT c.cuisine_name, p.title, p.popularity, RANK() OVER (PARTITION BY p.cuisine_id ORDER BY p.popularity DESC) AS rnk FROM "Recipe_Popularity" p JOIN "Cuisine" c USING (cuisine_id)) t WHERE rnk <= 3;` },
     { label: 'Recipes + creator', sql: `SELECT r.title, u.username FROM "Recipe" r JOIN "User" u ON r.user_id = u.user_id;` },
     { label: 'Ingredient substitutes', sql: `SELECT i.ingredient_name, s.reason, s.confidence_score FROM "SUBSTITUTES" s JOIN "Ingredient" i ON s.original_ingredient_id = i.ingredient_id;` },
     { label: 'Users + Dietary', sql: `SELECT u.username, d.restriction_name FROM "User" u JOIN "FOLLOWS" f ON u.user_id = f.user_id JOIN "Dietary_Restriction" d ON f.restriction_id = d.restriction_id;` },
@@ -152,14 +157,23 @@ function LiveQueryTab() {
     { label: 'Recipes by mood', sql: `SELECT r.title, m.mood_name FROM "FITS" f JOIN "Recipe" r ON f.recipe_id = r.recipe_id JOIN "Mood" m ON f.mood_id = m.mood_id;` },
   ]
 
-  const execute = async () => {
-    setLoading(true); setError(null); setResults([])
+  const execute = async (explain = false) => {
+    setLoading(true); setError(null); setResults([]); setPlan(null)
     try {
-      const res = await fetch('/api/query', { method: 'POST', body: JSON.stringify({ query, safeMode: true }) })
+      const res = await fetch('/api/query', { method: 'POST', body: JSON.stringify({ query, safeMode: true, explain }) })
       const data = await res.json()
-      if (data.error) setError(data.error); else setResults(data.result)
+      if (data.error) setError(data.error)
+      else if (explain) setPlan(data.plan)
+      else setResults(data.result)
     } catch (e) { setError(e instanceof Error ? e.message : "Unknown error") }
     setLoading(false)
+  }
+
+  // Summary of the plan: which access paths Postgres chose and how long it took
+  const planSummary = plan && {
+    indexScans: plan.filter(l => /Index (Only )?Scan|Bitmap Index Scan/.test(l)).length,
+    seqScans: plan.filter(l => /Seq Scan/.test(l)).length,
+    execTime: plan.find(l => l.startsWith('Execution Time'))?.replace('Execution Time: ', ''),
   }
 
   return (
@@ -182,11 +196,18 @@ function LiveQueryTab() {
           className="w-full bg-transparent text-[#ffe500] font-mono text-sm p-2 resize-none border-0 focus:ring-0 focus:outline-none h-28"
           spellCheck={false}
         />
-        <button onClick={execute} disabled={loading}
-          className="absolute bottom-6 right-6 brutalist-btn bg-[#ffe500] text-black px-5 py-2 text-xs flex items-center gap-2 disabled:opacity-50">
-          <Play className="w-3 h-3" fill="currentColor" />
-          {loading ? 'Running...' : 'Run Query'}
-        </button>
+        <div className="absolute bottom-6 right-6 flex gap-2">
+          <button onClick={() => execute(true)} disabled={loading}
+            className="brutalist-btn bg-white text-black px-4 py-2 text-xs flex items-center gap-2 disabled:opacity-50">
+            <Gauge className="w-3 h-3" />
+            Explain
+          </button>
+          <button onClick={() => execute(false)} disabled={loading}
+            className="brutalist-btn bg-[#ffe500] text-black px-5 py-2 text-xs flex items-center gap-2 disabled:opacity-50">
+            <Play className="w-3 h-3" fill="currentColor" />
+            {loading ? 'Running...' : 'Run Query'}
+          </button>
+        </div>
       </div>
 
       {/* Results */}
@@ -195,6 +216,24 @@ function LiveQueryTab() {
           <div className="m-4 border-[3px] border-black p-4 bg-[#ffe5e5] flex items-start gap-3">
             <AlertCircle className="w-5 h-5 shrink-0 text-red-700" />
             <code className="font-mono text-xs text-red-800">{error}</code>
+          </div>
+        ) : plan && planSummary ? (
+          <div className="p-4 space-y-3">
+            <div className="flex flex-wrap gap-2 font-mono text-[10px] uppercase font-black">
+              <span className="border-[2px] border-black px-2 py-1 bg-[#d9f99d]">{planSummary.indexScans} index scan{planSummary.indexScans === 1 ? '' : 's'}</span>
+              <span className={`border-[2px] border-black px-2 py-1 ${planSummary.seqScans ? 'bg-[#fecaca]' : 'bg-white'}`}>{planSummary.seqScans} sequential scan{planSummary.seqScans === 1 ? '' : 's'}</span>
+              {planSummary.execTime && <span className="border-[2px] border-black px-2 py-1 bg-white">Executed in {planSummary.execTime}</span>}
+              <span className="px-2 py-1 text-black/40">EXPLAIN (ANALYZE, BUFFERS) · rolled back</span>
+            </div>
+            <pre className="border-[3px] border-black bg-black text-white/80 p-4 font-mono text-xs overflow-x-auto leading-relaxed">
+              {plan.map((line, i) => (
+                <div key={i} className={
+                  /Index (Only )?Scan|Bitmap Index Scan/.test(line) ? 'text-[#a3e635] font-bold'
+                  : /Seq Scan/.test(line) ? 'text-[#f87171] font-bold'
+                  : /^(Planning|Execution) Time/.test(line) ? 'text-[#ffe500]' : ''
+                }>{line}</div>
+              ))}
+            </pre>
           </div>
         ) : results.length > 0 ? (
           <table className="w-full text-left text-xs border-collapse">
@@ -217,7 +256,7 @@ function LiveQueryTab() {
           </table>
         ) : !loading && (
           <div className="h-full flex items-center justify-center font-mono text-xs uppercase text-black/30">
-            Select a preset or write a query, then press Run.
+            Select a preset or write a query, then press Run — or Explain to see the query plan.
           </div>
         )}
       </div>

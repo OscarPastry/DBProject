@@ -14,6 +14,7 @@ export default function FilterBar({ cuisines, moods, searchParams, activeFilters
 
   const buildUrl = (key: string, value: string) => {
     const params = new URLSearchParams(searchParams)
+    params.delete('page')
     if (params.get(key) === value) params.delete(key)
     else params.set(key, value)
     return `/${params.toString() ? '?' + params.toString() : ''}`

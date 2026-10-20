@@ -167,90 +167,148 @@ export async function createRecipe(formData: FormData) {
   const moods: string[] = moodsJson ? JSON.parse(moodsJson) : []
   const diets: string[] = dietsJson ? JSON.parse(dietsJson) : []
 
-  let cuisineId: number | null = null
-  if (cuisineName) {
-    const cuisine = await prisma.cuisine.upsert({
-      where: { cuisine_name: cuisineName },
-      update: {},
-      create: { cuisine_name: cuisineName }
-    })
-    cuisineId = cuisine.cuisine_id
-  }
-
-  const recipe = await prisma.recipe.create({
-    data: {
-      title,
-      description,
-      estimated_time,
-      difficulty_level: difficulty,
-      user_id: session.userId,
-      cuisine_id: cuisineId,
-      images: images.length > 0
-        ? { create: images.map((url, i) => ({ image_url: url, image_order: i + 1, is_primary: i === 0 })) }
-        : undefined,
-      steps: steps.length > 0
-        ? { create: steps.map(s => ({ step_number: s.step_number, instruction: s.instruction })) }
-        : undefined,
+  // All writes succeed together or not at all, so a failure can't leave a half-built recipe
+  const recipeId = await prisma.$transaction(async (tx) => {
+    let cuisineId: number | null = null
+    if (cuisineName) {
+      const cuisine = await tx.cuisine.upsert({
+        where: { cuisine_name: cuisineName },
+        update: {},
+        create: { cuisine_name: cuisineName }
+      })
+      cuisineId = cuisine.cuisine_id
     }
-  })
 
-  for (const ing of ingredients) {
-    const ingredient = await prisma.ingredient.upsert({
-      where: { ingredient_name: ing.name },
-      update: {},
-      create: { ingredient_name: ing.name }
-    })
-    await prisma.uSES.create({
+    const recipe = await tx.recipe.create({
       data: {
-        recipe_id: recipe.recipe_id,
-        ingredient_id: ingredient.ingredient_id,
-        quantity: ing.quantity,
-        unit: ing.unit
+        title,
+        description,
+        estimated_time,
+        difficulty_level: difficulty,
+        user_id: session.userId,
+        cuisine_id: cuisineId,
+        images: images.length > 0
+          ? { create: images.map((url, i) => ({ image_url: url, image_order: i + 1, is_primary: i === 0 })) }
+          : undefined,
+        steps: steps.length > 0
+          ? { create: steps.map(s => ({ step_number: s.step_number, instruction: s.instruction })) }
+          : undefined,
       }
     })
-  }
 
-  for (const moodName of moods) {
-    const mood = await prisma.mood.upsert({
-      where: { mood_name: moodName },
-      update: {},
-      create: { mood_name: moodName }
-    })
-    await prisma.fITS.create({
-      data: { recipe_id: recipe.recipe_id, mood_id: mood.mood_id }
-    })
-  }
+    for (const ing of ingredients) {
+      const ingredient = await tx.ingredient.upsert({
+        where: { ingredient_name: ing.name },
+        update: {},
+        create: { ingredient_name: ing.name }
+      })
+      await tx.uSES.create({
+        data: {
+          recipe_id: recipe.recipe_id,
+          ingredient_id: ingredient.ingredient_id,
+          quantity: ing.quantity,
+          unit: ing.unit
+        }
+      })
+    }
 
-  for (const dietName of diets) {
-    const diet = await prisma.dietary_Restriction.upsert({
-      where: { restriction_name: dietName },
-      update: {},
-      create: { restriction_name: dietName }
-    })
-    await prisma.fITS_DIET.create({
-      data: { recipe_id: recipe.recipe_id, restriction_id: diet.restriction_id }
-    })
-  }
+    for (const moodName of moods) {
+      const mood = await tx.mood.upsert({
+        where: { mood_name: moodName },
+        update: {},
+        create: { mood_name: moodName }
+      })
+      await tx.fITS.create({
+        data: { recipe_id: recipe.recipe_id, mood_id: mood.mood_id }
+      })
+    }
+
+    for (const dietName of diets) {
+      const diet = await tx.dietary_Restriction.upsert({
+        where: { restriction_name: dietName },
+        update: {},
+        create: { restriction_name: dietName }
+      })
+      await tx.fITS_DIET.create({
+        data: { recipe_id: recipe.recipe_id, restriction_id: diet.restriction_id }
+      })
+    }
+
+    return recipe.recipe_id
+  }, { timeout: 20000 })
 
   revalidatePath('/')
-  redirect(`/recipe/${recipe.recipe_id}`)
+  redirect(`/recipe/${recipeId}`)
 }
 
 /**
- * BOARD: Save recipe
+ * BOARD: Create a board for the current user
+ */
+export async function createBoard(formData: FormData) {
+  const session = await getSession()
+  if (!session) return redirect('/login')
+
+  const boardName = (formData.get('board_name') as string || '').trim()
+  const visibility = formData.get('visibility') === 'public' ? 'public' : 'private'
+  if (!boardName) return
+
+  await prisma.board.create({
+    data: { board_name: boardName, visibility, user_id: session.userId }
+  })
+  revalidatePath('/boards')
+}
+
+/**
+ * BOARD: Save recipe to one of the current user's boards
  */
 export async function saveToBoard(formData: FormData) {
-    const recipeId = parseInt(formData.get('recipeId') as string)
-    const boardId = parseInt(formData.get('boardId') as string)
-    
-    try {
-        await prisma.sAVES.create({
-            data: { recipe_id: recipeId, board_id: boardId }
-        })
-        revalidatePath(`/recipe/${recipeId}`)
-    } catch {
-        // Already saved
-    }
+  const session = await getSession()
+  if (!session) return redirect('/login')
+
+  const recipeId = parseInt(formData.get('recipeId') as string)
+  const boardId = parseInt(formData.get('boardId') as string)
+  if (isNaN(recipeId) || isNaN(boardId)) return
+
+  const board = await prisma.board.findUnique({ where: { board_id: boardId } })
+  if (!board || board.user_id !== session.userId) return
+
+  await prisma.sAVES.upsert({
+    where: { board_id_recipe_id: { board_id: boardId, recipe_id: recipeId } },
+    update: {},
+    create: { recipe_id: recipeId, board_id: boardId }
+  })
+  revalidatePath(`/recipe/${recipeId}`)
+  revalidatePath('/boards')
+}
+
+/**
+ * BOARD: Remove recipe from one of the current user's boards
+ */
+export async function removeFromBoard(formData: FormData) {
+  const session = await getSession()
+  if (!session) return redirect('/login')
+
+  const recipeId = parseInt(formData.get('recipeId') as string)
+  const boardId = parseInt(formData.get('boardId') as string)
+  if (isNaN(recipeId) || isNaN(boardId)) return
+
+  await prisma.sAVES.deleteMany({
+    where: { board_id: boardId, recipe_id: recipeId, board: { user_id: session.userId } }
+  })
+  revalidatePath(`/recipe/${recipeId}`)
+  revalidatePath('/boards')
+}
+
+/**
+ * ANALYTICS: Recompute the Recipe_Popularity materialized view.
+ * CONCURRENTLY keeps the view readable while it rebuilds (needs its unique index).
+ */
+export async function refreshAnalytics() {
+  const session = await getSession()
+  if (!session) return redirect('/login')
+
+  await prisma.$executeRaw`REFRESH MATERIALIZED VIEW CONCURRENTLY "Recipe_Popularity"`
+  revalidatePath('/analytics')
 }
 
 /**

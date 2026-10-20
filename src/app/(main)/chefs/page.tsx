@@ -19,20 +19,20 @@ export default async function ChefsPage(props: { searchParams: Promise<{ search?
       : {},
     include: {
       profile: true,
-      recipes: true,
-      cooking_logs: true,
-      taste_signals: true,
+      recipes: { select: { recipe_id: true, title: true }, orderBy: { created_at: 'desc' }, take: 3 },
+      _count: { select: { recipes: true, cooking_logs: true, taste_signals: true } },
     },
     orderBy: { created_at: 'desc' },
   })
 
-  const totalViews = await Promise.all(
-    users.map(u =>
-      prisma.recipe_View_Log.count({
-        where: { recipe: { user_id: u.user_id } },
-      })
-    )
-  )
+  // Views received on each chef's recipes, in one grouped query
+  const viewRows = await prisma.$queryRaw<{ user_id: number; views: number }[]>`
+    SELECT r.user_id, COUNT(*)::int AS views
+    FROM "Recipe_View_Log" v
+    JOIN "Recipe" r ON r.recipe_id = v.recipe_id
+    GROUP BY r.user_id
+  `
+  const viewsByUser = new Map(viewRows.map(r => [r.user_id, r.views]))
 
   return (
     <div className="max-w-7xl mx-auto px-6 py-10 space-y-10">
@@ -121,10 +121,10 @@ export default async function ChefsPage(props: { searchParams: Promise<{ search?
                   {/* Stats row */}
                   <div className="grid grid-cols-4 border-b-[3px] border-[var(--border)]">
                     {[
-                      { Icon: BookOpen, value: user.recipes.length, label: 'Recipes' },
-                      { Icon: Eye, value: totalViews[i], label: 'Views' },
-                      { Icon: Flame, value: user.cooking_logs.length, label: 'Cooked' },
-                      { Icon: ChefHat, value: user.taste_signals.length, label: 'Signals' },
+                      { Icon: BookOpen, value: user._count.recipes, label: 'Recipes' },
+                      { Icon: Eye, value: viewsByUser.get(user.user_id) ?? 0, label: 'Views' },
+                      { Icon: Flame, value: user._count.cooking_logs, label: 'Cooked' },
+                      { Icon: ChefHat, value: user._count.taste_signals, label: 'Signals' },
                     ].map(({ Icon, value, label }, j) => (
                       <div key={label}
                         className={`p-4 flex flex-col items-center text-center ${j < 3 ? 'border-r-[3px] border-[var(--border)]' : ''}`}>
@@ -140,7 +140,7 @@ export default async function ChefsPage(props: { searchParams: Promise<{ search?
                     <div className="p-4 flex-1">
                       <p className="font-mono text-[10px] font-black uppercase text-[var(--fg-dim)] mb-2">Recent Recipes</p>
                       <div className="space-y-1">
-                        {user.recipes.slice(0, 3).map(r => (
+                        {user.recipes.map(r => (
                           <div key={r.recipe_id}
                             className="font-mono text-xs uppercase text-[var(--fg-muted)] truncate group-hover:text-[var(--fg)]">
                             → {r.title}

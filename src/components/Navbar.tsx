@@ -32,6 +32,10 @@ export default async function Navbar() {
             className="text-[var(--fg-muted)] font-mono font-medium text-sm uppercase hover:bg-[var(--yellow)] hover:text-black px-3 py-1 transition-none border-r border-[var(--border-muted)]">
             Pantry
           </Link>
+          <Link href="/analytics"
+            className="text-[var(--fg-muted)] font-mono font-medium text-sm uppercase hover:bg-[var(--yellow)] hover:text-black px-3 py-1 transition-none border-r border-[var(--border-muted)]">
+            Analytics
+          </Link>
           <Link href="/admin/ingredients"
             className="text-[var(--fg-muted)] font-mono font-medium text-sm uppercase hover:bg-[var(--yellow)] hover:text-black px-3 py-1 transition-none">
             Ingredients

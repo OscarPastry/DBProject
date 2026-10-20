@@ -9,7 +9,8 @@ const adapter = new PrismaPg(pool)
 const prismaClientSingleton = () => {
   return new PrismaClient({ 
     adapter,
-    log: ['query', 'info', 'warn', 'error'],
+    // Set PRISMA_LOG_QUERIES=1 to print every SQL statement while debugging
+    log: process.env.PRISMA_LOG_QUERIES === '1' ? ['query', 'info', 'warn', 'error'] : ['warn', 'error'],
   })
 }
 
