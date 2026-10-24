@@ -11,13 +11,16 @@ const pool = new Pool({ connectionString })
 const adapter = new PrismaPg(pool)
 const prisma = new PrismaClient({ adapter })
 
+// One row of substitution_pairs.json
+type SubstitutionPair = { ingredient: string; substitution: string | null }
+
 async function main() {
   console.log('📊 Local Statistical Prediction Model Started')
 
   // Load substitution pairs JSON dataset
   const jsonPath = path.join(__dirname, '../substitution_pairs.json')
   const rawData = fs.readFileSync(jsonPath, 'utf-8')
-  const allPairs = JSON.parse(rawData) as any[]
+  const allPairs = JSON.parse(rawData) as SubstitutionPair[]
 
   console.log(`Loaded ${allPairs.length} raw pairs from substitution_pairs.json`)
 
@@ -43,7 +46,7 @@ async function main() {
         dbIngredientsLower.includes(p.substitution.toLowerCase()) &&
         p.substitution.toLowerCase() !== targetName
       )
-      .map(p => p.substitution.toLowerCase())
+      .map(p => p.substitution!.toLowerCase())
 
     if (rawCandidates.length === 0) continue
 
@@ -103,8 +106,8 @@ async function main() {
         })
         console.log(`  ✅ Added: ${subName} (Score: ${confidence.toFixed(2)}, Found: ${count} times)`)
         matchedCount++
-      } catch (e: any) {
-        console.error(`  ❌ Error inserting: ${subName}`, e.message)
+      } catch (e) {
+        console.error(`  ❌ Error inserting: ${subName}`, e instanceof Error ? e.message : e)
       }
     }
 

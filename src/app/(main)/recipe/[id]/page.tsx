@@ -6,6 +6,9 @@ import { getSession } from '@/lib/auth'
 import Image from 'next/image'
 import FindNearbyButton from '@/components/FindNearbyButton'
 import ReviewSection from '@/components/ReviewSection'
+import { saveToBoard } from '@/app/actions'
+import { alsoCooked } from '@/lib/queries'
+import Link from 'next/link'
 
 export default async function RecipePage({ params }: { params: Promise<{ id: string }> }) {
   const resolvedParams = await params
@@ -43,6 +46,21 @@ export default async function RecipePage({ params }: { params: Promise<{ id: str
   if (!recipe) return notFound()
 
   const session = await getSession()
+  const myBoards = session?.userId
+    ? await prisma.board.findMany({
+        where: { user_id: session.userId },
+        select: { board_id: true, board_name: true, recipes: { where: { recipe_id: recipeId }, select: { recipe_id: true } } },
+        orderBy: { board_name: 'asc' },
+      })
+    : []
+  const unsavedBoards = myBoards.filter(b => b.recipes.length === 0)
+
+  const related = await alsoCooked(prisma, recipeId)
+  const relatedRows = related.length === 0 ? [] : await prisma.recipe.findMany({
+    where: { recipe_id: { in: related.map(r => r.recipe_id) } },
+    select: { recipe_id: true, title: true, images: { where: { is_primary: true }, take: 1 } },
+  })
+  const relatedById = new Map(relatedRows.map(r => [r.recipe_id, r]))
   if (session?.userId) {
     try {
       await prisma.recipe_View_Log.create({ data: { user_id: session.userId, recipe_id: recipeId } })
@@ -141,6 +159,21 @@ export default async function RecipePage({ params }: { params: Promise<{ id: str
           {recipe.cuisine && (
             <FindNearbyButton cuisine={recipe.cuisine.cuisine_name} recipeTitle={recipe.title} />
           )}
+          {unsavedBoards.length > 0 && (
+            <form action={saveToBoard} className="flex items-center gap-2">
+              <input type="hidden" name="recipeId" value={recipeId} />
+              <select name="boardId" aria-label="Board"
+                className="border-[2px] border-[var(--border)] bg-[var(--bg-card)] text-[var(--fg)] px-2 py-1.5 font-mono text-xs uppercase">
+                {unsavedBoards.map(b => <option key={b.board_id} value={b.board_id}>{b.board_name}</option>)}
+              </select>
+              <button type="submit" className="brutalist-btn bg-[var(--fg)] text-[var(--yellow)] px-3 py-1.5 text-xs">
+                Save to Board
+              </button>
+            </form>
+          )}
+          {myBoards.length > 0 && unsavedBoards.length === 0 && (
+            <span className="font-mono text-xs uppercase text-[var(--fg-muted)]">Saved to all your boards</span>
+          )}
           <div className="ml-auto font-mono text-sm uppercase text-[var(--fg-muted)]">
             By <span className="text-[var(--fg)] font-bold">{recipe.user.profile?.display_name || recipe.user.username}</span>
           </div>
@@ -230,6 +263,38 @@ export default async function RecipePage({ params }: { params: Promise<{ id: str
           </div>
         </div>
       </div>
+
+      {/* People who cooked this also cooked */}
+      {related.length > 0 && (
+        <div className="brutalist-card">
+          <div className="p-5 border-b-[3px] border-[var(--border)] bg-[var(--fg)] flex items-center justify-between">
+            <h2 className="font-headline font-black text-xl uppercase tracking-tighter text-[var(--yellow)]">Cooks Also Made</h2>
+            <span className="font-mono text-[10px] uppercase text-[var(--bg)] opacity-50">Cooking_Log self-join</span>
+          </div>
+          <div className="grid grid-cols-2 md:grid-cols-4">
+            {related.map((rel, i) => {
+              const r = relatedById.get(rel.recipe_id)
+              if (!r) return null
+              return (
+                <Link key={rel.recipe_id} href={`/recipe/${rel.recipe_id}`}
+                  className={`group block p-4 hover:bg-[var(--yellow)] hover:text-black ${i > 0 ? 'md:border-l-[3px] border-[var(--border)]' : ''}`}>
+                  <div className="h-24 mb-3 overflow-hidden border-[2px] border-[var(--border)] bg-[var(--bg-muted)]">
+                    {r.images[0] ? (
+                      <Image src={r.images[0].image_url} alt={r.title} width={300} height={200} className="w-full h-full object-cover" />
+                    ) : (
+                      <div className="w-full h-full flex items-center justify-center"><ChefHat className="w-6 h-6 text-[var(--fg-ghost)]" /></div>
+                    )}
+                  </div>
+                  <p className="font-headline font-extrabold text-sm uppercase tracking-tighter leading-tight line-clamp-2 text-[var(--fg)] group-hover:text-black">{r.title}</p>
+                  <p className="font-mono text-[9px] uppercase text-[var(--fg-dim)] mt-1 group-hover:text-black">
+                    {rel.shared_cooks} {rel.shared_cooks === 1 ? 'cook' : 'cooks'} in common
+                  </p>
+                </Link>
+              )
+            })}
+          </div>
+        </div>
+      )}
 
       {/* Reviews Section */}
       <ReviewSection

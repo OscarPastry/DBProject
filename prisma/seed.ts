@@ -794,7 +794,7 @@ async function main() {
   const cuisineImgIdx: Record<string, number> = {}
 
   const recipes: { recipe_id: number }[] = []
-  let usesData: { recipe_id: number; ingredient_id: number; quantity: number; unit: string }[] = []
+  const usesData: { recipe_id: number; ingredient_id: number; quantity: number; unit: string }[] = []
 
   // ─────────────────────────────────────────────────────────────────────────────
   // CUSTOM IMAGE URLs FOR CSV RECIPES
@@ -1958,15 +1958,24 @@ async function main() {
   await prisma.sAVES.createMany({ data: uniqueSaves })
   console.log(`✓ Created ${uniqueSaves.length} board saves`)
 
+  // Spread activity over the last 90 days (deterministic, so every seed run
+  // produces the same timeline for the analytics page)
+  const daysAgo = (n: number) => new Date(Date.now() - n * 864e5 - ((n * 7919) % 864e5))
+
   // ── Cooking Logs ─────────────────────────────────────────────────────────────
+  // Users in the same group (u % 5) cook from a shared set of recipes, so the
+  // "people who cooked this also cooked" recommendation has overlap to find.
   const cookData = []
   for (let u = 0; u < users.length; u++) {
-    const logCount = 2 + (u % 4)
+    const logCount = 3 + (u % 4)
     for (let r = 0; r < logCount; r++) {
-      const recipeIdx = (u * 11 + r * 7) % recipes.length
+      const recipeIdx = r === 0
+        ? (u * 11) % recipes.length
+        : ((u % 5) * 6 + r * 3) % Math.min(30, recipes.length)
       cookData.push({
         user_id: users[u].user_id,
         recipe_id: recipes[recipeIdx].recipe_id,
+        cooked_at: daysAgo((u * 17 + r * 9) % 90),
       })
     }
   }
@@ -1976,10 +1985,13 @@ async function main() {
   // ── View Logs ────────────────────────────────────────────────────────────────
   const viewData = []
   for (let i = 0; i < users.length; i++) {
-    for (let j = 0; j < 15; j++) {
+    for (let j = 0; j < 40; j++) {
+      // squaring skews views toward recent days, giving the timeline an upward trend
+      const age = Math.floor(90 * (((i * 40 + j) * 37) % 100 / 100) ** 2)
       viewData.push({
         user_id: users[i].user_id,
         recipe_id: recipes[(i + j * 7) % recipes.length].recipe_id,
+        viewed_at: daysAgo(age),
       })
     }
   }
@@ -2022,7 +2034,7 @@ async function main() {
 
       try {
         await prisma.review.create({
-          data: { user_id: userId, recipe_id: recipeId, rating, comment }
+          data: { user_id: userId, recipe_id: recipeId, rating, comment, created_at: daysAgo((r * 7 + u * 11) % 90) }
         })
         reviewCount++
       } catch {
@@ -2031,6 +2043,10 @@ async function main() {
     }
   }
   console.log(`✓ Created ${reviewCount} reviews`)
+
+  // ── Analytics ───────────────────────────────────────────────────────────────
+  await prisma.$executeRaw`REFRESH MATERIALIZED VIEW "Recipe_Popularity"`
+  console.log('✓ Refreshed Recipe_Popularity materialized view')
 
   // ── Summary ─────────────────────────────────────────────────────────────────
   console.log('\n✅ FlavorForge database seeded successfully!')

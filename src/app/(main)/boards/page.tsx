@@ -2,12 +2,20 @@
 import { prisma } from '@/lib/prisma'
 import Link from 'next/link'
 import Image from 'next/image'
-import { Globe, Lock, ChefHat } from 'lucide-react'
+import { Globe, Lock, ChefHat, X } from 'lucide-react'
+import { redirect } from 'next/navigation'
+import { getSession } from '@/lib/auth'
+import { createBoard, removeFromBoard } from '@/app/actions'
 
 const STRIPES = ['#ffe500', '#363cff', '#b71422', '#000', '#ffe500', '#363cff']
 
 export default async function BoardsPage() {
+  const session = await getSession()
+  if (!session) redirect('/login')
+
+  // Public boards from everyone, plus the viewer's own private ones
   const boards = await prisma.board.findMany({
+    where: { OR: [{ visibility: 'public' }, { user_id: session.userId }] },
     include: {
       user: { include: { profile: true } },
       recipes: {
@@ -28,9 +36,24 @@ export default async function BoardsPage() {
             Recipe<br />Boards
           </h1>
         </div>
-        <button className="brutalist-btn bg-[var(--yellow)] text-black px-6 py-3 text-sm">
-          + New Board
-        </button>
+        <details className="relative">
+          <summary className="brutalist-btn bg-[var(--yellow)] text-black px-6 py-3 text-sm cursor-pointer list-none">
+            + New Board
+          </summary>
+          <form action={createBoard}
+            className="absolute right-0 mt-2 z-10 w-72 brutalist-card p-4 space-y-3 bg-[var(--bg-card)]">
+            <input name="board_name" required maxLength={80} placeholder="Board name"
+              className="w-full border-[2px] border-[var(--border)] bg-[var(--bg)] text-[var(--fg)] px-3 py-2 font-mono text-xs" />
+            <select name="visibility" defaultValue="private"
+              className="w-full border-[2px] border-[var(--border)] bg-[var(--bg)] text-[var(--fg)] px-3 py-2 font-mono text-xs uppercase">
+              <option value="private">Private</option>
+              <option value="public">Public</option>
+            </select>
+            <button type="submit" className="brutalist-btn bg-[var(--fg)] text-[var(--yellow)] px-4 py-2 text-xs w-full">
+              Create
+            </button>
+          </form>
+        </details>
       </section>
 
       <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-8">
@@ -76,10 +99,22 @@ export default async function BoardsPage() {
                 {board.recipes.length > 0 && (
                   <div className="mt-4 pt-4 border-t-[2px] border-[var(--border)] space-y-1">
                     {board.recipes.slice(0, 3).map(save => (
-                      <Link key={save.recipe_id} href={`/recipe/${save.recipe_id}`}
-                        className="block font-mono text-xs uppercase text-[var(--fg-muted)] hover:text-[var(--fg)] hover:bg-[var(--yellow)] hover:text-black px-1 transition-none truncate">
-                        → {save.recipe.title}
-                      </Link>
+                      <div key={save.recipe_id} className="flex items-center gap-1">
+                        <Link href={`/recipe/${save.recipe_id}`}
+                          className="flex-1 min-w-0 block font-mono text-xs uppercase text-[var(--fg-muted)] hover:text-[var(--fg)] hover:bg-[var(--yellow)] hover:text-black px-1 transition-none truncate">
+                          → {save.recipe.title}
+                        </Link>
+                        {board.user_id === session.userId && (
+                          <form action={removeFromBoard}>
+                            <input type="hidden" name="boardId" value={board.board_id} />
+                            <input type="hidden" name="recipeId" value={save.recipe_id} />
+                            <button type="submit" aria-label={`Remove ${save.recipe.title}`}
+                              className="p-0.5 text-[var(--fg-dim)] hover:text-[var(--red)]">
+                              <X className="w-3 h-3" />
+                            </button>
+                          </form>
+                        )}
+                      </div>
                     ))}
                     {board.recipes.length > 3 && (
                       <p className="font-mono text-[10px] text-[var(--fg-ghost)] uppercase">+{board.recipes.length - 3} more...</p>

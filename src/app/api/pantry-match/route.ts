@@ -1,20 +1,23 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
+import { pantryMatches } from '@/lib/queries'
+
+const MAX_RESULTS = 60
 
 export async function POST(request: NextRequest) {
-  const { ingredientIds } = await request.json() as { ingredientIds: number[] }
+  const body = await request.json() as { ingredientIds?: unknown }
+  const ingredientIds = Array.isArray(body.ingredientIds)
+    ? body.ingredientIds.filter((id): id is number => Number.isInteger(id))
+    : []
 
-  if (!ingredientIds || ingredientIds.length === 0) {
+  if (ingredientIds.length === 0) {
     return NextResponse.json({ recipes: [] })
   }
 
-  // Find all recipes that use at least one of the selected ingredients
-  // For each recipe, count total ingredients and how many match
+  const scored = await pantryMatches(prisma, ingredientIds, MAX_RESULTS)
+
   const recipes = await prisma.recipe.findMany({
-    where: {
-      is_public: true,
-      ingredients: { some: { ingredient_id: { in: ingredientIds } } }
-    },
+    where: { recipe_id: { in: scored.map(s => s.recipe_id) } },
     include: {
       images: { where: { is_primary: true }, take: 1 },
       cuisine: true,
@@ -23,21 +26,14 @@ export async function POST(request: NextRequest) {
       user: { include: { profile: true } },
     }
   })
+  const byId = new Map(recipes.map(r => [r.recipe_id, r]))
+  const selected = new Set(ingredientIds)
 
-  const results = recipes.map(recipe => {
-    const totalIngredients = recipe.ingredients.length
-    const matchedIngredients = recipe.ingredients.filter(u =>
-      ingredientIds.includes(u.ingredient_id)
-    )
-    const missingIngredients = recipe.ingredients.filter(u =>
-      !ingredientIds.includes(u.ingredient_id)
-    )
-    const matchPercentage = totalIngredients > 0
-      ? Math.round((matchedIngredients.length / totalIngredients) * 100)
-      : 0
-
-    return {
-      recipe_id: recipe.recipe_id,
+  const results = scored.flatMap(({ recipe_id, total, matched }) => {
+    const recipe = byId.get(recipe_id)
+    if (!recipe) return []
+    return [{
+      recipe_id,
       title: recipe.title,
       description: recipe.description,
       estimated_time: recipe.estimated_time,
@@ -46,16 +42,13 @@ export async function POST(request: NextRequest) {
       cuisine_name: recipe.cuisine?.cuisine_name || null,
       chef_name: recipe.user.profile?.display_name || recipe.user.username,
       moods: recipe.moods.map(m => m.mood.mood_name),
-      totalIngredients,
-      matchedCount: matchedIngredients.length,
-      matchPercentage,
-      matchedNames: matchedIngredients.map(m => m.ingredient.ingredient_name),
-      missingNames: missingIngredients.map(m => m.ingredient.ingredient_name),
-    }
+      totalIngredients: total,
+      matchedCount: matched,
+      matchPercentage: Math.round((matched / total) * 100),
+      matchedNames: recipe.ingredients.filter(u => selected.has(u.ingredient_id)).map(u => u.ingredient.ingredient_name),
+      missingNames: recipe.ingredients.filter(u => !selected.has(u.ingredient_id)).map(u => u.ingredient.ingredient_name),
+    }]
   })
-
-  // Sort: 100% first, then by match percentage descending
-  results.sort((a, b) => b.matchPercentage - a.matchPercentage)
 
   return NextResponse.json({ recipes: results })
 }

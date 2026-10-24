@@ -3,6 +3,7 @@ import { getSession } from '@/lib/auth'
 import { redirect } from 'next/navigation'
 import Link from 'next/link'
 import { ArrowLeft, Save, User, Image as ImageIcon, FileText } from 'lucide-react'
+import { updateProfile } from '@/app/actions'
 
 export default async function EditProfilePage() {
   const session = await getSession()
@@ -33,7 +34,7 @@ export default async function EditProfilePage() {
 
       <div className="brutalist-card bg-[#fdf9ee] overflow-hidden">
         <div className="h-4 bg-[#363cff] border-b-[3px] border-black" />
-        <form action="/api/profile/update" method="POST" className="p-8 space-y-6">
+        <form action={updateProfile} className="p-8 space-y-6">
           <div>
             <label className="block font-mono font-black text-xs uppercase mb-2 text-black/70">Display Name</label>
             <div className="relative">

@@ -56,6 +56,9 @@ model User_Taste_Signal {
 
   user_id     Int
   user        User     @relation(fields: [user_id], references: [user_id], onDelete: Cascade)
+
+  // One aggregated signal per user + type; triggers in the db_upgrades migration keep it current
+  @@unique([user_id, signal_type])
 }
 
 // Dietary
@@ -75,6 +78,8 @@ model FITS_DIET {
   restriction    Dietary_Restriction @relation(fields: [restriction_id], references: [restriction_id], onDelete: Cascade)
 
   @@id([recipe_id, restriction_id])
+
+  @@index([restriction_id])
 }
 
 model FOLLOWS {
@@ -85,6 +90,8 @@ model FOLLOWS {
   restriction    Dietary_Restriction @relation(fields: [restriction_id], references: [restriction_id], onDelete: Cascade)
 
   @@id([user_id, restriction_id])
+
+  @@index([restriction_id])
 }
 
 // Cuisine
@@ -105,6 +112,8 @@ model SELECTS {
   cuisine         Cuisine         @relation(fields: [cuisine_id], references: [cuisine_id], onDelete: Cascade)
 
   @@id([onboarding_id, cuisine_id])
+
+  @@index([cuisine_id])
 }
 
 // Recipes
@@ -116,6 +125,9 @@ model Recipe {
   difficulty_level String
   is_public        Boolean  @default(true)
   created_at       DateTime @default(now())
+
+  // Generated column (see migration): weighted tsvector over title + description for full-text search
+  search_vector    Unsupported("tsvector")? @default(dbgenerated())
 
   user_id          Int
   user             User     @relation(fields: [user_id], references: [user_id], onDelete: Cascade)
@@ -132,6 +144,11 @@ model Recipe {
   saved_by         SAVES[]
   moods            FITS[]
   diets            FITS_DIET[]
+
+  @@index([user_id])
+  @@index([cuisine_id])
+  @@index([is_public, created_at])
+  @@index([search_vector], type: Gin)
 }
 
 model Recipe_Step {
@@ -165,6 +182,9 @@ model Recipe_View_Log {
 
   recipe_id Int
   recipe    Recipe   @relation(fields: [recipe_id], references: [recipe_id], onDelete: Cascade)
+
+  @@index([recipe_id])
+  @@index([user_id])
 }
 
 model Cooking_Log {
@@ -176,6 +196,9 @@ model Cooking_Log {
 
   recipe_id Int
   recipe    Recipe   @relation(fields: [recipe_id], references: [recipe_id], onDelete: Cascade)
+
+  @@index([recipe_id])
+  @@index([user_id])
 }
 
 // Ingredients
@@ -202,6 +225,8 @@ model USES {
   ingredient    Ingredient @relation(fields: [ingredient_id], references: [ingredient_id], onDelete: Cascade)
 
   @@id([recipe_id, ingredient_id])
+
+  @@index([ingredient_id])
 }
 
 model SUBSTITUTES {
@@ -216,6 +241,8 @@ model SUBSTITUTES {
   substitute               Ingredient @relation("SubstituteIngredient", fields: [substitute_ingredient_id], references: [ingredient_id], onDelete: Cascade)
 
   @@id([original_ingredient_id, substitute_ingredient_id])
+
+  @@index([substitute_ingredient_id])
 }
 
 // Boards
@@ -228,6 +255,8 @@ model Board {
   user       User     @relation(fields: [user_id], references: [user_id], onDelete: Cascade)
 
   recipes    SAVES[]
+
+  @@index([user_id])
 }
 
 model SAVES {
@@ -240,6 +269,8 @@ model SAVES {
   recipe    Recipe   @relation(fields: [recipe_id], references: [recipe_id], onDelete: Cascade)
 
   @@id([board_id, recipe_id])
+
+  @@index([recipe_id])
 }
 
 // Moods
@@ -258,6 +289,8 @@ model FITS {
   mood      Mood   @relation(fields: [mood_id], references: [mood_id], onDelete: Cascade)
 
   @@id([recipe_id, mood_id])
+
+  @@index([mood_id])
 }
 
 // Reviews
@@ -274,4 +307,6 @@ model Review {
   recipe     Recipe   @relation(fields: [recipe_id], references: [recipe_id], onDelete: Cascade)
 
   @@unique([user_id, recipe_id])
+
+  @@index([recipe_id])
 }

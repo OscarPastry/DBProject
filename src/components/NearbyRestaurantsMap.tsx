@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useCallback, useEffect } from 'react'
+import { useState, useCallback, useEffect, useSyncExternalStore } from 'react'
 import { createPortal } from 'react-dom'
 import { APIProvider, Map, AdvancedMarker, Pin, InfoWindow } from '@vis.gl/react-google-maps'
 import { MapPin, X, Navigation, Loader2 } from 'lucide-react'
@@ -30,15 +30,12 @@ export default function NearbyRestaurantsMap({ cuisine, recipeTitle, onClose }: 
   const [searched, setSearched] = useState(false)
   const [center, setCenter] = useState({ lat: 12.8406, lng: 80.1534 })
   const [geoError, setGeoError] = useState('')
-  const [mounted, setMounted] = useState(false)
+  // true only in the browser, so the portal never renders during SSR
+  const mounted = useSyncExternalStore(() => () => {}, () => true, () => false)
 
   useEffect(() => {
     document.body.style.overflow = 'hidden'
     return () => { document.body.style.overflow = '' }
-  }, [])
-
-  useEffect(() => {
-    setMounted(true)
   }, [])
 
   const searchRestaurants = useCallback(async () => {
